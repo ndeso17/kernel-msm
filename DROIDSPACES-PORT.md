@@ -193,6 +193,17 @@ still has working hardware.
 
 ## 5. Build
 
+The scripts in `~/Documents/Android/moto-kernel-work/tools` do all of this and
+carry the manifest, pahole and toolchain paths; `. tools/env.sh` first, then:
+
+```bash
+tools/configure.sh          # phone's /proc/config.gz + the fragment
+tools/build.sh              # ~40 min on 4 cores, Image ≈ 35 MB
+tools/verify_crcs.sh        # vendor ABI gate, MISMATCH must be 0
+```
+
+By hand:
+
 ```bash
 export PATH=<pahole>/usr/bin:<clang-r510928>/bin:$PATH
 cd moto-kernel                      # branch dsp-6.6.87
@@ -204,10 +215,13 @@ make -s O=$OUT ARCH=arm64 LLVM=1 CC=clang LD=ld.lld LLVM_IAS=1 olddefconfig
 make -j4 O=$OUT ARCH=arm64 LLVM=1 CC=clang LD=ld.lld LLVM_IAS=1 Image
 ```
 
-Keep `ARCH=arm64` on every `make` call: drop it and Kconfig quietly answers the
-x86 questions, then the build fails a long way from the cause.
+Pass `ARCH=arm64` explicitly on every call. Without it a host-arch build
+happens instead and nothing says so until much later. An earlier draft of this
+section wrote `ARrm64`, a typo that did exactly that: the word is parsed as a
+target name, the arch silently falls back to `uname -m`, and Kconfig answers the
+x86 questions without an error.
 
-`~40 min` on 4 cores, `Image` ≈ 31 MB.
+`~40 min` on 4 cores, `Image` ≈ 35 MB.
 
 ## 6. Package and flash
 
