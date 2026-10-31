@@ -36,9 +36,19 @@ struct user_struct {
 	/* Miscellaneous per-user rate limit */
 	struct ratelimit_state ratelimit;
 
+	/* Droidspaces: mq_bytes lives in the kABI padding rather than above
+	 * ratelimit. In the upstream position it would grow user_struct and
+	 * re-hash every symbol that takes a user_struct, which unloads the
+	 * phone's prebuilt vendor modules. */
+#ifdef CONFIG_POSIX_MQUEUE
+	ANDROID_KABI_USE(1, unsigned long mq_bytes);
+	ANDROID_KABI_RESERVE(2);
+	ANDROID_OEM_DATA_ARRAY(1, 2);
+#else
 	ANDROID_KABI_RESERVE(1);
 	ANDROID_KABI_RESERVE(2);
 	ANDROID_OEM_DATA_ARRAY(1, 2);
+#endif
 };
 
 extern int uids_sysfs_init(void);
