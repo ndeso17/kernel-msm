@@ -328,10 +328,42 @@ moved into a namespace is unreachable in both families, because the policy
 routing tables take the lookup before the link route), so use a real
 Droidspaces container plus a dummy interface, not `ip netns`.
 
-## 9. Fallback
+## 9. devtmpfs and macvlan (v3)
+
+Two optional Droidspaces features needed kernel options that stock did not carry.
+Both were measured before being enabled, because a config option that moves a
+struct re-hashes the CRCs the prebuilt vendor modules check on load, and the
+kernel that results refuses to load its own driver set:
+
+| option | flag it unlocks | vendor CRC mismatches |
+|---|---|---|
+| `CONFIG_DEVTMPFS` | `--hw-access` | 0 of 84 sampled |
+| `CONFIG_MACVLAN` | `--net=macvlan` | 0 of 84 sampled |
+
+The sampling tool is `tools/abi_probe.sh` in the work tree: it configures the
+option on top of the shipped config, compiles the 14 objects that export vendor
+symbols, and diffs their `#SYMVER` lines against the manifest. Both options came
+out at zero, and the shipped v3 kernel confirms it end to end: 382/484 symbols
+match, 102 are exported by other vendor modules, 0 mismatch, `module_layout`
+still `0x4e276f37`, and 443 modules load with no `disagrees about version`.
+
+`CONFIG_DEVTMPFS_MOUNT` is deliberately left off. It would make the kernel mount
+devtmpfs over `/dev` during boot, before ueventd runs, and take the device nodes
+away from Android's init. With only `DEVTMPFS` on, the kernel maintains the
+devtmpfs instance and `--hw-access` copies from it, while `/dev` stays init's.
+
+`CONFIG_MACVLAN` is built in rather than `=m`: there is no module path for it on
+the phone, and a missing `.ko` would only show up when a container starts.
+
+The three exports that arrive with macvlan (`macvlan_common_newlink`,
+`macvlan_common_setup`, `macvlan_link_register`, `macvlan_dellink`) are new
+symbols, not changed ones, and none of them appears in the vendor manifest.
+
+## 10. Fallback
 
 `kernel-images/boot_a.img` is the raw stock partition dump (the whole 96 MB), so
-recovery is one command and needs no repacking:
+recovery is one command and needs no repacking. The published copy of that dump
+is the `boot_stock_6.6.87_mumba_v1.img` asset on the v1 release:
 
 ```bash
 fastboot flash boot_a kernel-images/boot_a.img
