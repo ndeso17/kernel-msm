@@ -251,9 +251,9 @@ adb shell su -c 'dmesg | grep -i "disagrees about version"'
 
 `droidspaces check` must show every MUST HAVE item green. Expected yellows,
 because those options were dropped to protect the vendor ABI: `devtmpfs`,
-`macvlan`, `IPv6 NAT`, `CPU limit` (`CFS_BANDWIDTH`), `Process limit`
-(`CGROUP_PIDS`), `Sandboxing` (`USER_NS`). `--net=nat` still probes Bridge and
-Veth green.
+`macvlan`, `CPU limit` (`CFS_BANDWIDTH`), `Process limit` (`CGROUP_PIDS`),
+`Sandboxing` (`USER_NS`). `--net=nat` still probes Bridge and Veth green, and
+`IPv6 NAT` has been green since v2 (see section 8).
 
 Then prove the runtime end to end:
 
@@ -269,9 +269,66 @@ adb shell su -c '/data/local/Droidspaces/bin/droidspaces --name=alpine-test \
 
 Measured on the device after flashing: Alpine 3.20.3, hostname `alpine`, PID 1
 is the container's own `init` while the host sees it as an ordinary PID,
-`6.6.87-4k-g6c5cd71a3007-dirty`.
+`6.6.87-4k-g38a4b4b81cbd-dirty`.
 
-## 8. Fallback
+One thing to know when testing a fresh container: this Alpine rootfs does not
+run a DHCP client on boot, so `ip -4 addr` shows nothing until something asks
+for a lease. The monitor does run a DHCP server
+(`DHCP Server started on ds-v<pid> offer=172.28.x.y`) and a manual
+`udhcpc -i eth0 -q -n` inside the container gets it at once. Unrelated to the
+kernel and present in v1 as well.
+
+## 8. IPv6 NAT (v2)
+
+`--net=nat` gave containers IPv4 only until v2. The gap was the ip6tables nat
+table, nothing else:
+
+```
+su -c "ip6tables -t nat -L"   # v1: can't initialize table `nat': Table does not exist
+```
+
+The runtime asks for exactly that in `ds_ipt6_available()`
+(`src/net/iptables.c`): an `ip6_tables` raw socket, `get_table("nat")`, then
+`IP6T_SO_GET_REVISION_TARGET "MASQUERADE"`. Stock already has the IPv6 stack,
+`IP6_NF_IPTABLES`, `NF_NAT`, `NF_NAT_MASQUERADE` and
+`NETFILTER_XT_TARGET_MASQUERADE`; only the nat table and its target are missing,
+so the fragment adds two options:
+
+```
+CONFIG_IP6_NF_NAT=y
+CONFIG_IP6_NF_TARGET_MASQUERADE=y
+```
+
+They cost no ABI. `ip6table_nat.o` and `xt_MASQUERADE.o` export no `__ksymtab`
+symbols, and the three canaries are unchanged: `module_layout = 0x4e276f37`,
+`_dev_err = 0x3b00ee3e`, `__put_task_struct = 0xc6040a84`, with the full gate
+still at 0 mismatches. That is the difference between these two options and the
+`CGROUP_*` / `BRIDGE_NETFILTER` / `NF_TABLES` set, which move structs.
+
+Measured on the device with v2 flashed:
+
+| check | result |
+|---|---|
+| `ip6tables -t nat -S` | chains exist |
+| `droidspaces check` | `[✓] IPv6 NAT support` |
+| container `ip -6 addr` | `fd64:7370::88:80ff:fe9d:d27d/64` via SLAAC |
+| container `ip -6 route` | `default via fe80::1` |
+| container -> `fd64:7370::1` | 2/2 replies |
+| container -> local upstream `fd00:6::99` (dummy iface) | 3/3 replies |
+| `POSTROUTING` MASQUERADE rule | matched, and conntrack shows the source rewritten to the upstream address |
+
+**Not proven:** container to the IPv6 internet. The phone has no IPv6 uplink at
+all: `ip -6 route show default` is empty and the APN is `protocol=IP`
+(IPv4-only), so the radio never carries IPv6. Change the APN to `IPV4V6` or use
+a network that advertises a global prefix before claiming that in a release
+note.
+
+A trap for the local test: `ip netns` is broken on this Android build (a veth
+moved into a namespace is unreachable in both families, because the policy
+routing tables take the lookup before the link route), so use a real
+Droidspaces container plus a dummy interface, not `ip netns`.
+
+## 9. Fallback
 
 `kernel-images/boot_a.img` is the raw stock partition dump (the whole 96 MB), so
 recovery is one command and needs no repacking:
